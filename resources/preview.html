@@ -1,0 +1,389 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2021-2022 Megan Conkle <megan.conkle@kdemail.net>
+
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<html lang="en">
+    <meta charset="utf-8">
+    <head>
+        <script>
+            MathJax = {
+                tex: {
+                    inlineMath: [['$', '$'], ['\\(', '\\)'], ['\\[', '\\]']]
+                }
+            };
+
+            function scrollToHeading(headingNumber) {
+                var headers = document.querySelectorAll("div > h1, div > h2, div > h3, div > h4, div > h5, div > h6");
+
+                if ((headingNumber > 0) && (headingNumber <= headers.length)) {
+                    headers[headingNumber - 1].scrollIntoView();
+                }
+            }
+
+            const previewManualScrollLockMs = 1200;
+            var previewSyncBlockedUntil = 0;
+
+            function suspendPreviewSync(duration) {
+                previewSyncBlockedUntil =
+                    Date.now() + (duration || previewManualScrollLockMs);
+            }
+
+            function sourceRange(element) {
+                var sourcePosition = element.getAttribute("data-sourcepos");
+                var match = sourcePosition
+                    ? sourcePosition.match(/^(\d+):\d+-(\d+):\d+$/)
+                    : null;
+
+                if (!match) {
+                    return null;
+                }
+
+                return {
+                    start: Number(match[1]),
+                    end: Number(match[2])
+                };
+            }
+
+            function scrollToSourceLine(
+                    lineNumber, fallbackRatio, viewportAnchor) {
+                if (Date.now() < previewSyncBlockedUntil) {
+                    return;
+                }
+
+                var scrollContainer =
+                    document.getElementById("livepreviewplaceholder");
+
+                if (!scrollContainer) {
+                    return;
+                }
+
+                var elements = Array.from(
+                    document.querySelectorAll("[data-sourcepos]"));
+                var target = null;
+                var targetRange = null;
+                var bestDistance = Number.MAX_SAFE_INTEGER;
+
+                for (var i = 0; i < elements.length; ++i) {
+                    var range = sourceRange(elements[i]);
+
+                    if (!range) {
+                        continue;
+                    }
+
+                    var containsLine =
+                        range.start <= lineNumber && lineNumber <= range.end;
+                    var distance = containsLine
+                        ? 0
+                        : Math.min(
+                            Math.abs(lineNumber - range.start),
+                            Math.abs(lineNumber - range.end));
+
+                    if ((distance < bestDistance)
+                            || ((distance === bestDistance)
+                                && targetRange
+                                && ((range.end - range.start)
+                                    < (targetRange.end - targetRange.start)))) {
+                        target = elements[i];
+                        targetRange = range;
+                        bestDistance = distance;
+                    }
+                }
+
+                if (target && targetRange) {
+                    var targetRect = target.getBoundingClientRect();
+                    var containerRect =
+                        scrollContainer.getBoundingClientRect();
+                    var lineSpan = Math.max(
+                        1, targetRange.end - targetRange.start + 1);
+                    var lineOffset = Math.max(
+                        0, Math.min(lineSpan - 1,
+                            lineNumber - targetRange.start));
+                    var targetY = scrollContainer.scrollTop
+                        + targetRect.top - containerRect.top
+                        + (targetRect.height * lineOffset / lineSpan);
+                    var clampedAnchor = Number.isFinite(viewportAnchor)
+                        ? Math.max(0, Math.min(1, viewportAnchor))
+                        : 0;
+
+                    scrollContainer.scrollTo({
+                        top: Math.max(0, targetY
+                            - scrollContainer.clientHeight * clampedAnchor),
+                        behavior: "auto"
+                    });
+                    return;
+                }
+
+                var maxScroll = Math.max(
+                    0, scrollContainer.scrollHeight
+                        - scrollContainer.clientHeight);
+                scrollContainer.scrollTo({
+                    top: maxScroll * Math.max(0, Math.min(1, fallbackRatio)),
+                    behavior: "auto"
+                });
+            }
+
+            document.addEventListener("wheel", function() {
+                suspendPreviewSync();
+            }, { capture: true, passive: true });
+            document.addEventListener("pointerdown", function() {
+                suspendPreviewSync();
+            }, true);
+            document.addEventListener("touchstart", function() {
+                suspendPreviewSync();
+            }, { capture: true, passive: true });
+            document.addEventListener("keydown", function(event) {
+                if (["PageUp", "PageDown", "Home", "End",
+                        "ArrowUp", "ArrowDown"].includes(event.key)) {
+                    suspendPreviewSync();
+                }
+            }, true);
+            document.addEventListener("error", function(event) {
+                var image = event.target;
+
+                if (!image || image.tagName !== "IMG"
+                        || image.dataset.loadErrorShown) {
+                    return;
+                }
+
+                image.dataset.loadErrorShown = "true";
+                var message = "\u56fe\u7247\u65e0\u6cd5\u52a0\u8f7d\uff1a"
+                    + (image.getAttribute("src") || "");
+                image.classList.add("ghostwriter-image-error");
+                image.alt = message;
+                image.title = message;
+            }, true);
+        </script>
+        <script type="text/javascript" id="MathJax-script" src="qrc:3rdparty/MathJax/bin/tex-svg-full.js"></script>
+        <script language='Javascript'  type='text/javascript' src="qrc:3rdparty/react/react.production.min.js"></script>
+        <script language='Javascript'  type='text/javascript' src="qrc:3rdparty/react/react-dom.production.min.js"></script>
+        <script language='Javascript'  type='text/javascript' src="qrc:3rdparty/react/html-react-parser.js"></script>
+        <script language='Javascript'  type='text/javascript' src="qrc:/qtwebchannel/qwebchannel.js"></script>
+    </head>
+    <body>
+        <div id="livepreviewplaceholder"><p></p></div>
+        <script language='Javascript' type='text/javascript'>
+
+            class LivePreview extends React.Component {
+                constructor(props) {
+                    super(props);
+                    
+                    this.initializeWebChannel = this.initializeWebChannel.bind(this);
+                    this.loadStyleSheet = this.loadStyleSheet.bind(this);
+                    this.updateLivePreview = this.updateLivePreview.bind(this);
+                    this.setMathEnabled = this.setMathEnabled.bind(this);
+                    this.scrollToChange = this.scrollToChange.bind(this);
+                    this.setPreviewSyncEnabled =
+                        this.setPreviewSyncEnabled.bind(this);
+                    this.syncToSourcePosition =
+                        this.syncToSourcePosition.bind(this);
+
+                    this.mutationObserver = new MutationObserver(
+                        this.scrollToChange
+                    );
+
+                    this.scrollElement = null;
+                    this.previewSyncEnabled = true;
+                    this.sourceLine = 1;
+                    this.sourceScrollRatio = 0;
+                    this.sourceViewportAnchor = 0;
+
+                    this.mutationObserver.observe(
+                        document.getElementById("livepreviewplaceholder"),
+                        {
+                            attributes: true,
+                            characterData: true,
+                            childList: true,
+                            subtree: true,
+                            attributeOldValue: false,
+                            characterDataOldValue: false
+                        }
+                    );
+
+                    this.state = {
+                        livePreviewHTML: '',
+                        mathEnabled: false
+                    };
+
+                    new QWebChannel(qt.webChannelTransport,
+                        this.initializeWebChannel
+                    );
+                }
+
+                initializeWebChannel(channel) {
+                    var proxy = channel.objects.previewProxy;
+
+                    this.loadStyleSheet(proxy.styleSheet);
+                    proxy.styleSheetChanged.connect(this.loadStyleSheet);
+
+                    this.updateLivePreview(proxy.htmlContent);
+                    proxy.htmlChanged.connect(this.updateLivePreview);
+
+                    this.setMathEnabled(proxy.mathEnabled);
+                    proxy.mathToggled.connect(this.setMathEnabled);
+
+                    this.setPreviewSyncEnabled(proxy.previewSyncEnabled);
+                    proxy.previewSyncToggled.connect(
+                        this.setPreviewSyncEnabled);
+                    proxy.sourcePositionChanged.connect(
+                        this.syncToSourcePosition);
+                    this.syncToSourcePosition(
+                        proxy.sourceLine(), proxy.sourceScrollRatio(),
+                        proxy.sourceViewportAnchor());
+                }
+
+                loadStyleSheet(css) {
+                    var cssElem = document.getElementById('ghostwriter_css');
+
+                    if (cssElem) {
+                        cssElem.textContent = css;
+                    }
+                    else {
+                        cssElem  = document.createElement('style');
+                        cssElem.id   = 'ghostwriter_css';
+                        cssElem.type = 'text/css';
+                        cssElem.media = 'all';
+                        cssElem.textContent = css;
+                        document.head.appendChild(cssElem);
+                    }
+                }
+
+                updateLivePreview(html) {
+                    this.setState({ livePreviewHTML: html });
+
+                    // Call MathJax to update document, if the library is
+                    // available and the math feature is enabled.
+                    if ((typeof window.MathJax !== 'undefined')
+                            && (this.state.mathEnabled)) {
+                        window.MathJax.typeset();
+                    }
+                }
+
+                setMathEnabled(enabled) {
+                    this.setState({ mathEnabled: enabled });
+
+                    // Clear out the old MathJax data in the DOM, otherwise
+                    // React will not properly diff the old and new
+                    // content where equations appear.
+                    var previousHtml = this.state.livePreviewHTML;
+                    this.updateLivePreview("");
+                    
+                    // Restore the old content without the math.
+                    this.updateLivePreview(previousHtml);
+                }
+
+                setPreviewSyncEnabled(enabled) {
+                    this.previewSyncEnabled = enabled;
+
+                    if (enabled) {
+                        this.applySourcePosition();
+                    }
+                }
+
+                syncToSourcePosition(
+                        lineNumber, scrollRatio, viewportAnchor) {
+                    this.sourceLine = lineNumber;
+                    this.sourceScrollRatio = scrollRatio;
+                    this.sourceViewportAnchor = viewportAnchor;
+                    this.applySourcePosition();
+                }
+
+                applySourcePosition() {
+                    if (this.previewSyncEnabled) {
+                        scrollToSourceLine(
+                            this.sourceLine, this.sourceScrollRatio,
+                            this.sourceViewportAnchor);
+                    }
+                }
+
+                componentDidUpdate() {
+                    this.applySourcePosition();
+                }
+
+                getLivePreviewContent() {
+                    return this.state.livePreviewHTML;
+                }
+
+                scrollToChange(mutations) {
+                    if (this.previewSyncEnabled) {
+                        return;
+                    }
+
+                    var scrollToNode = null;
+
+                    for (var i = 0; i < mutations.length; i++) {
+                        var mutation = mutations[i];
+
+                        if ("attributes" === mutation.type) {
+                            scrollToNode = mutation.target;
+                        }
+                        else if ("characterData" === mutation.type) {
+                            scrollToNode = mutation.target.parentNode;
+                        }
+                        else if ("childList" === mutation.type) {
+                            if (mutation.addedNodes.length > 0) {
+                                for (var j = 0; j < mutation.addedNodes.length; j++) {
+                                    if (1 === mutation.addedNodes[j].nodeType) {
+                                        scrollToNode = mutation.addedNodes[j];
+                                        break;
+                                    }
+                                }
+                            }
+                            else if (mutation.removedNodes.length > 0) {
+                                scrollToNode = mutation.removedNodes[0].previousSibling;
+
+                                // If there is no previous sibling to the deleted nodes, then
+                                // go to the parent node.
+                                //
+                                if (!scrollToNode) {
+                                    scrollToNode = mutation.target;
+                                }
+                            }
+                        }
+                        else {
+                            console.error("Unsupported mutation type from MutationObserver: "
+                                + mutation.type);
+                        }
+                    }
+
+                    if (scrollToNode && (typeof scrollToNode.scrollIntoView !== 'undefined')) {
+                        scrollToNode.scrollIntoView();
+                    }
+                }
+
+                render() {
+                    return React.createElement('div', null,
+                        HTMLReactParser(this.getLivePreviewContent()));
+                }
+            }
+
+            class ErrorBoundary extends React.Component {
+                constructor(props) {
+                    super(props);
+                    this.state = { hasError: false };
+                }
+
+                componentDidCatch(error, info) {
+                    this.setState({ hasError: true });
+                }
+                
+                render() {
+                    if (this.state.hasError) {
+                        this.setState({ hasError: false });
+                        return "<p>Game over!  Insert coin.</p>";
+                    }
+                    
+                    return this.props.children;
+                }
+            }
+
+            ReactDOM.render(
+                React.createElement(ErrorBoundary,
+                    null,
+                    React.createElement(LivePreview, null)),
+                document.getElementById('livepreviewplaceholder'));
+
+        </script>
+    </body>
+</html>

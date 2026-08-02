@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: KDE ghostwriter upstream
+    url: https://invent.kde.org/office/ghostwriter/-/issues
+    about: 与 YumiMDWriter 定制无关的跨平台问题可先检查上游。

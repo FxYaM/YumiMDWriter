@@ -1,0 +1,41 @@
+name: Bug report
+description: 报告可复现的 YumiMDWriter 问题
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: 请先确认问题可以在当前源码或最新 Release 中复现。
+  - type: input
+    id: version
+    attributes:
+      label: YumiMDWriter 版本
+      placeholder: 例如 26.11.70 YumiMDWriter Windows Edition 1.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 系统环境
+      placeholder: Windows 11 24H2, 150% DPI, Microsoft Pinyin
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请提供最小 Markdown 示例、操作顺序和实际结果。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与截图
+      description: 请移除私人路径、令牌和未授权内容。
