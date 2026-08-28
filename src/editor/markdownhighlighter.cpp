@@ -432,7 +432,7 @@ void MarkdownHighlighterPrivate::applyFormattingForNode(const MarkdownNode *cons
                 if (current->isFencedCodeBlock()
                         && (((q->currentBlock().blockNumber() + 1) == current->startLine())
                             || ((q->currentBlock().blockNumber() + 1) == current->endLine()))) {
-                    format.setForeground(colors.codeMarkup);
+                    format.setForeground(colors.codeText);
                     state = MarkdownStateCodeBlock;
                 } else if (((q->currentBlock().blockNumber() + 1) == current->endLine())
                         && (current->length() <= 0)) {
@@ -491,7 +491,8 @@ void MarkdownHighlighterPrivate::applyFormattingForNode(const MarkdownNode *cons
                     }
                 }
 
-                format.setForeground(colors.codeMarkup);
+                format.setBackground(codeBackgroundColor(colors));
+                format.setForeground(colors.codeText);
                 q->setFormat(
                     pos - backticks,
                     length + (2 * backticks),

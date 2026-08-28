@@ -74,6 +74,7 @@ StyleSheetBuilder::StyleSheetBuilder(const ChromeColors &colors,
     addColor(colors, "$link-color", ChromeColors::Link);
     addColor(colors, "$heading-color", ChromeColors::Heading);
     addColor(colors, "$code-color", ChromeColors::Code);
+    addColor(colors, "$code-background-color", ChromeColors::CodeBackground);
     addColor(colors, "$block-quote-color", ChromeColors::BlockQuote);
     addColor(colors, "$separator-color", ChromeColors::Separator);
     addColor(colors, "$secondary-separator-color", ChromeColors::SecondarySeparator);

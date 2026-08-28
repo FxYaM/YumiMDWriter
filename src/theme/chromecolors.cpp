@@ -24,6 +24,7 @@ typedef enum ColorId {
     LinkColor,
     HeadingColor,
     CodeColor,
+    CodeBackgroundColor,
     BlockQuoteColor,
     SeparatorColor,
     SelectedTextFgColor,
@@ -108,6 +109,7 @@ ChromeColors::ChromeColors(const ColorScheme &base)
     d->colors[LinkColor][NormalState] = base.link;
     d->colors[HeadingColor][NormalState] = base.headingText;
     d->colors[CodeColor][NormalState] = base.codeText;
+    d->colors[CodeBackgroundColor][NormalState] = codeBackgroundColor(base);
     d->colors[BlockQuoteColor][NormalState] = base.blockquoteText;
     d->colors[SeparatorColor][NormalState] = base.emphasisMarkup;
 

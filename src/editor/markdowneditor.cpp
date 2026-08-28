@@ -19,8 +19,8 @@
 #include <QFileInfo>
 #include <QFocusEvent>
 #include <QFontMetricsF>
-#include <QGuiApplication>
 #include <QGridLayout>
+#include <QGuiApplication>
 #include <QImageReader>
 #include <QImageWriter>
 #include <QInputMethod>
@@ -31,6 +31,7 @@
 #include <QMimeData>
 #include <QMimeDatabase>
 #include <QMimeType>
+#include <QPaintEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
@@ -62,6 +63,7 @@ namespace
 constexpr auto unbreakableSpace{" "}; // Entity: &nbsp; HTML code: &#160; Unicode: U+00AO
 constexpr auto doubleSpace{"  "};
 constexpr auto unbreakableSpaceIndicator{"_"};
+constexpr int lineNumberHorizontalPadding = 8;
 }
 class MarkdownEditorPrivate
 {
@@ -109,6 +111,12 @@ public:
     FocusMode focusMode;
     QBrush fadeColor;
     QColor blockColor;
+    QWidget *lineNumberArea;
+    QColor lineNumberBackgroundColor;
+    QColor lineNumberColor;
+    QColor activeLineNumberColor;
+    QColor lineNumberSeparatorColor;
+    int reservedLineNumberWidth;
     QColor whitespaceRenderColor;
     QColor unbreakableSpaceRenderColor;
     bool insertSpacesForTabs;
@@ -238,6 +246,12 @@ MarkdownEditor::MarkdownEditor
     this->setDocument(textDocument);
     this->setAcceptDrops(true);
 
+    d->lineNumberArea = new QWidget(this);
+    d->lineNumberArea->setObjectName(QStringLiteral("lineNumberArea"));
+    d->lineNumberArea->setAttribute(Qt::WA_OpaquePaintEvent);
+    d->lineNumberArea->installEventFilter(this);
+    d->reservedLineNumberWidth = 0;
+
     d->preferredLayout = new QGridLayout();
     d->preferredLayout->setSpacing(0);
     d->preferredLayout->setContentsMargins(0, 0, 0, 0);
@@ -299,6 +313,26 @@ MarkdownEditor::MarkdownEditor
     connect(this, SIGNAL(cursorPositionChanged()), this, SLOT(onCursorPositionChanged()));
     connect(this->document(), SIGNAL(contentsChange(int, int, int)), this, SLOT(onContentsChanged(int, int, int)));
     connect(this, SIGNAL(selectionChanged()), this, SLOT(onSelectionChanged()));
+    connect(this, &QPlainTextEdit::blockCountChanged, this, [this](int) {
+        Q_D(MarkdownEditor);
+
+        if (lineNumberAreaWidth() != d->reservedLineNumberWidth) {
+            setupPaperMargins();
+        }
+
+        d->lineNumberArea->update();
+    });
+    connect(this, &QPlainTextEdit::updateRequest, this, [this](const QRect &rect, int dy) {
+        Q_D(MarkdownEditor);
+
+        if (dy != 0) {
+            const int viewportTop = viewport()->geometry().top() - d->lineNumberArea->geometry().top();
+            d->lineNumberArea->scroll(0, dy, QRect(0, viewportTop, lineNumberAreaWidth(), viewport()->height()));
+        } else {
+            const int viewportTop = viewport()->geometry().top() - d->lineNumberArea->geometry().top();
+            d->lineNumberArea->update(0, rect.y() + viewportTop, lineNumberAreaWidth(), rect.height());
+        }
+    });
     connect(this->verticalScrollBar(), &QScrollBar::valueChanged, this, [this]() {
         updateInputMethodGeometry();
     });
@@ -357,6 +391,7 @@ MarkdownEditor::MarkdownEditor
         }
     );
     d->cursorBlinkTimer->start(500);
+    this->setupPaperMargins();
 }
 
 MarkdownEditor::~MarkdownEditor()
@@ -742,14 +777,20 @@ void MarkdownEditor::setColorScheme
     d->cursorColor = colors.cursor;
     d->whitespaceRenderColor = colors.listMarkup;
     d->unbreakableSpaceRenderColor = colors.error;
-    d->blockColor = colors.foreground;
-    d->blockColor.setAlpha(10);
+    d->blockColor = codeBackgroundColor(colors);
+    d->lineNumberBackgroundColor = d->blockColor;
+    d->lineNumberColor = colors.foreground;
+    d->lineNumberColor.setAlpha(150);
+    d->activeLineNumberColor = colors.foreground;
+    d->lineNumberSeparatorColor = colors.foreground;
+    d->lineNumberSeparatorColor.setAlpha(35);
 
     QColor fadedForegroundColor = colors.foreground;
     fadedForegroundColor.setAlpha(100);
 
     d->fadeColor = QBrush(fadedForegroundColor);
     this->focusText();
+    d->lineNumberArea->update();
 }
 
 void MarkdownEditor::setFont(const QString &family, double pointSize)
@@ -760,6 +801,8 @@ void MarkdownEditor::setFont(const QString &family, double pointSize)
     QPlainTextEdit::setFont(font);
     d->highlighter->setFont(family, pointSize);
     setTabulationWidth(d->tabWidth);
+    setupPaperMargins();
+    d->lineNumberArea->update();
 }
 
 void MarkdownEditor::setShowTabsAndSpacesEnabled(bool enabled)
@@ -788,7 +831,10 @@ void MarkdownEditor::setupPaperMargins()
 {
     Q_D(MarkdownEditor);
 
-    this->setViewportMargins(0, 20, 0, 0);
+    const int lineNumberWidth = lineNumberAreaWidth();
+    d->reservedLineNumberWidth = lineNumberWidth;
+
+    this->setViewportMargins(lineNumberWidth, 20, 0, 0);
     d->preferredLayout->setContentsMargins(0, 0, 0, 0);
 
     // Use a simple monospace font at a fixed size to determine
@@ -813,7 +859,9 @@ void MarkdownEditor::setupPaperMargins()
     case EditorWidthWide:
         width *= 100;
         break;
+    case EditorWidthFull:
     default:
+        updateLineNumberAreaGeometry();
         return;
     }
 
@@ -823,7 +871,69 @@ void MarkdownEditor::setupPaperMargins()
         margin = (this->viewport()->width() - width) / 2;
     }
 
-    this->setViewportMargins(margin, 20, margin, 0);
+    this->setViewportMargins(lineNumberWidth + margin, 20, margin, 0);
+    updateLineNumberAreaGeometry();
+}
+
+int MarkdownEditor::lineNumberAreaWidth() const
+{
+    int digits = 1;
+    int maximumLineNumber = qMax(1, blockCount());
+
+    while (maximumLineNumber >= 10) {
+        maximumLineNumber /= 10;
+        ++digits;
+    }
+
+    return (2 * lineNumberHorizontalPadding) + (fontMetrics().horizontalAdvance(QLatin1Char('9')) * digits);
+}
+
+void MarkdownEditor::paintLineNumberArea(QPaintEvent *event)
+{
+    Q_D(MarkdownEditor);
+
+    QPainter painter(d->lineNumberArea);
+    painter.fillRect(event->rect(), d->lineNumberBackgroundColor);
+    painter.setPen(d->lineNumberSeparatorColor);
+    painter.drawLine(d->lineNumberArea->width() - 1, event->rect().top(), d->lineNumberArea->width() - 1, event->rect().bottom());
+
+    QTextBlock block = firstVisibleBlock();
+    const int viewportTop = viewport()->geometry().top() - d->lineNumberArea->geometry().top();
+    int top = viewportTop + qRound(blockBoundingGeometry(block).translated(contentOffset()).top());
+    int bottom = top + qRound(blockBoundingRect(block).height());
+    const int currentBlockNumber = textCursor().blockNumber();
+    const QFontMetricsF numberMetrics(painter.font());
+
+    while (block.isValid() && top <= event->rect().bottom()) {
+        if (block.isVisible() && bottom >= event->rect().top()) {
+            painter.setPen(block.blockNumber() == currentBlockNumber ? d->activeLineNumberColor : d->lineNumberColor);
+            const QString lineNumber = QString::number(block.blockNumber() + 1);
+            qreal baseline = top + numberMetrics.ascent();
+            const QTextLayout *layout = block.layout();
+
+            if ((layout != nullptr) && (layout->lineCount() > 0)) {
+                const QTextLine firstLine = layout->lineAt(0);
+                baseline = top + firstLine.y() + firstLine.ascent();
+            }
+
+            const qreal x = d->lineNumberArea->width() - lineNumberHorizontalPadding - numberMetrics.horizontalAdvance(lineNumber);
+            painter.drawText(QPointF(qMax<qreal>(0.0, x), baseline), lineNumber);
+        }
+
+        block = block.next();
+        top = bottom;
+
+        if (block.isValid()) {
+            bottom = top + qRound(blockBoundingRect(block).height());
+        }
+    }
+}
+
+void MarkdownEditor::updateLineNumberAreaGeometry()
+{
+    Q_D(MarkdownEditor);
+
+    d->lineNumberArea->setGeometry(contentsRect().left(), contentsRect().top(), lineNumberAreaWidth(), contentsRect().height());
 }
 
 QVariant MarkdownEditor::inputMethodQuery(Qt::InputMethodQuery query) const
@@ -960,6 +1070,13 @@ void MarkdownEditor::dropEvent(QDropEvent *e)
 
 bool MarkdownEditor::eventFilter(QObject *object, QEvent *event)
 {
+    Q_D(MarkdownEditor);
+
+    if ((object == d->lineNumberArea) && (event->type() == QEvent::Paint)) {
+        paintLineNumberArea(static_cast<QPaintEvent *>(event));
+        return true;
+    }
+
     if (object == window()) {
         switch (event->type()) {
         case QEvent::Move:
@@ -1935,6 +2052,7 @@ void MarkdownEditor::onCursorPositionChanged()
 
     // Update widget to ensure cursor is drawn.
     update();
+    d->lineNumberArea->update();
     updateInputMethodGeometry();
 
     emit cursorPositionChanged(this->textCursor().position());
@@ -1949,6 +2067,7 @@ void MarkdownEditor::moveEvent(QMoveEvent *event)
 void MarkdownEditor::resizeEvent(QResizeEvent *event)
 {
     QPlainTextEdit::resizeEvent(event);
+    updateLineNumberAreaGeometry();
     updateInputMethodGeometry();
 }
 

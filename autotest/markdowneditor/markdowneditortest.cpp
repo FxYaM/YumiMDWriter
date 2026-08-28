@@ -6,6 +6,7 @@
 
 #include <QScrollBar>
 #include <QTest>
+#include <QTextLayout>
 
 #include "../../src/editor/markdowneditor.h"
 
@@ -18,6 +19,8 @@ class MarkdownEditorTest : public QObject
 private slots:
     void inputMethodRectUsesEditorCoordinates();
     void inputMethodAnchorRectUsesEditorCoordinates();
+    void displaysAndReservesLineNumberArea();
+    void highlightsInlineCodeWithBackground();
 };
 
 static ColorScheme testColors()
@@ -27,7 +30,22 @@ static ColorScheme testColors()
     colors.background = Qt::white;
     colors.selection = Qt::blue;
     colors.cursor = Qt::black;
+    colors.codeText = Qt::black;
+    colors.codeMarkup = Qt::darkGray;
     return colors;
+}
+
+static QTextCharFormat formatAt(const QTextBlock &block, int position)
+{
+    const QList<QTextLayout::FormatRange> formats = block.layout()->formats();
+
+    for (const QTextLayout::FormatRange &range : formats) {
+        if ((position >= range.start) && (position < (range.start + range.length))) {
+            return range.format;
+        }
+    }
+
+    return QTextCharFormat();
 }
 
 static QRect editorCoordinates(
@@ -87,6 +105,58 @@ void MarkdownEditorTest::inputMethodAnchorRectUsesEditorCoordinates()
     QCOMPARE(
         editor.inputMethodQuery(Qt::ImAnchorRectangle).toRect(),
         editorCoordinates(editor, anchorCursor));
+}
+
+void MarkdownEditorTest::displaysAndReservesLineNumberArea()
+{
+    MarkdownDocument document;
+    MarkdownEditor editor(&document, testColors());
+    editor.setEditorWidth(EditorWidthFull);
+    editor.setupPaperMargins();
+    editor.resize(480, 180);
+    editor.setPlainText(QString("line\n").repeated(8) + "line");
+    editor.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&editor));
+
+    QWidget *lineNumberArea = editor.findChild<QWidget *>(QStringLiteral("lineNumberArea"));
+    QVERIFY(lineNumberArea != nullptr);
+    QVERIFY(lineNumberArea->isVisible());
+
+    const int oneDigitWidth = lineNumberArea->width();
+    QVERIFY(oneDigitWidth > 0);
+    QVERIFY(editor.viewport()->geometry().left() > lineNumberArea->geometry().right());
+
+    editor.setPlainText(QString("line\n").repeated(99) + "line");
+    QCoreApplication::processEvents();
+
+    QVERIFY(lineNumberArea->width() > oneDigitWidth);
+    QVERIFY(editor.viewport()->geometry().left() > lineNumberArea->geometry().right());
+
+    editor.verticalScrollBar()->setValue(editor.verticalScrollBar()->maximum());
+    QCoreApplication::processEvents();
+    QVERIFY(editor.topVisibleSourceLine() > 1);
+}
+
+void MarkdownEditorTest::highlightsInlineCodeWithBackground()
+{
+    const ColorScheme colors = testColors();
+    MarkdownDocument document;
+    MarkdownEditor editor(&document, colors);
+    editor.setPlainText("before `inline` after");
+    editor.highlighter()->rehighlight();
+    QCoreApplication::processEvents();
+
+    const QTextBlock block = document.firstBlock();
+    const int openingBacktick = block.text().indexOf(QLatin1Char('`'));
+    const int closingBacktick = block.text().lastIndexOf(QLatin1Char('`'));
+    QVERIFY(openingBacktick >= 0);
+    QVERIFY(closingBacktick > openingBacktick);
+
+    const QColor expectedBackground(245, 245, 245);
+    QVERIFY(expectedBackground != colors.background);
+    QCOMPARE(formatAt(block, openingBacktick).background().color(), expectedBackground);
+    QCOMPARE(formatAt(block, openingBacktick + 1).background().color(), expectedBackground);
+    QCOMPARE(formatAt(block, closingBacktick).background().color(), expectedBackground);
 }
 
 QTEST_MAIN(MarkdownEditorTest)

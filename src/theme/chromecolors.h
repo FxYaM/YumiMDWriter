@@ -40,6 +40,7 @@ public:
         Link,
         Heading,
         Code,
+        CodeBackground,
         BlockQuote,
         Separator,
         SelectedTextFg,

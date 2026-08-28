@@ -31,6 +31,21 @@ typedef struct ColorScheme {
     QColor codeMarkup;
     QColor error;
 } ColorScheme;
+
+inline QColor codeBackgroundColor(const ColorScheme &colors)
+{
+    constexpr int foregroundAlpha = 10;
+    constexpr int colorChannelMaximum = 255;
+    constexpr int backgroundAlpha = colorChannelMaximum - foregroundAlpha;
+
+    auto blendChannel = [=](int foreground, int background) {
+        return ((foreground * foregroundAlpha) + (background * backgroundAlpha) + (colorChannelMaximum / 2)) / colorChannelMaximum;
+    };
+
+    return QColor(blendChannel(colors.foreground.red(), colors.background.red()),
+                  blendChannel(colors.foreground.green(), colors.background.green()),
+                  blendChannel(colors.foreground.blue(), colors.background.blue()));
+}
 } // namespace ghostwriter
 
 #endif // COLORSCHEME_H

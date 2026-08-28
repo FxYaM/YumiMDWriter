@@ -10,6 +10,8 @@ YumiMDWriter 是基于 [KDE ghostwriter](https://github.com/KDE/ghostwriter) 的
 
 ## 主要改进
 
+- 编辑器左侧显示自适应源码行号；自动换行产生的视觉续行不重复编号，并支持滚动、大标题对齐和当前行高亮。
+- 行内代码与围栏代码块在编辑器和实时预览中使用统一、与主题协调的背景与清晰边界。
 - Windows 中文输入法候选框跟随真实文本光标，兼容滚动、窗口移动和 DPI 变化。
 - 编辑器滚动时，以左侧最上方实际可见文字行为锚点，将右侧对应 HTML 块定位到顶部。
 - 光标移动时按照光标在编辑器视口中的相对位置同步预览。
@@ -71,4 +73,4 @@ YumiMDWriter 基于 KDE ghostwriter 26.11.70。上游项目版权归原作者及
 
 ## English
 
-YumiMDWriter is a Windows-focused fork of KDE ghostwriter with improved Chinese IME positioning, source-aware preview synchronization, local-image workflows, drag and drop, Windows system fonts, and custom Windows branding. See [BUILDING_WINDOWS.md](BUILDING_WINDOWS.md) for a reproducible Qt 6/KF6 build.
+YumiMDWriter is a Windows-focused fork of KDE ghostwriter with source line numbers, improved code styling, Chinese IME positioning, source-aware preview synchronization, local-image workflows, drag and drop, Windows system fonts, and custom Windows branding. See [BUILDING_WINDOWS.md](BUILDING_WINDOWS.md) for a reproducible Qt 6/KF6 build.

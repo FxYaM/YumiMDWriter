@@ -110,7 +110,7 @@ td {
 
 pre {
     color: $code-color;
-    background-color: transparent;
+    background-color: $code-background-color;
     font-family: "$code-font-family", monospace;
     border: 1px solid $separator-color;
     padding: 10px;
@@ -122,8 +122,11 @@ pre {
 
 code {
     color: $code-color;
+    background-color: $code-background-color;
     font-family: "$code-font-family", monospace;
     font-size: $code-font-size;
+    padding: 0.1em 0.25em;
+    border-radius: 2px;
 }
 
 a {
@@ -137,6 +140,7 @@ img {
 pre code, pre tt {
     background-color: transparent;
     border: none;
+    padding: 0;
 }
 
 blockquote {

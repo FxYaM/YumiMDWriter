@@ -408,6 +408,9 @@ protected slots:
 
 private:
     QRect inputMethodRect(const QTextCursor &cursor) const;
+    int lineNumberAreaWidth() const;
+    void paintLineNumberArea(QPaintEvent *event);
+    void updateLineNumberAreaGeometry();
     void updateInputMethodGeometry();
 
     QScopedPointer<MarkdownEditorPrivate> d_ptr;
