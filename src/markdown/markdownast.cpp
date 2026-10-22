@@ -28,6 +28,12 @@ public:
 
     MemoryArena<MarkdownNode> arena;
     MarkdownNode *root;
+
+    // Highlighting normally queries lines in order. Retain only the
+    // top-level search position so each lookup preserves the full descent
+    // rules below without rescanning preceding top-level siblings.
+    mutable MarkdownNode *lastTopLevelBlock = nullptr;
+    mutable int lastLookupLine = -1;
 };
 
 MarkdownAST::MarkdownAST()
@@ -62,7 +68,10 @@ MarkdownNode *MarkdownAST::root()
 void MarkdownAST::setRoot(cmark_node *root)
 {
     Q_D(MarkdownAST);
-    
+
+    d->lastTopLevelBlock = nullptr;
+    d->lastLookupLine = -1;
+
     d->arena.freeAll();
 
     if (nullptr == root) {
@@ -110,6 +119,21 @@ MarkdownNode *MarkdownAST::findBlockAtLine(int lineNumber) const
 
     MarkdownNode *candidate = nullptr;
     MarkdownNode *current = d->root->firstChild();
+
+    if ((d->lastLookupLine >= 0) && (lineNumber >= d->lastLookupLine)) {
+        current = d->lastTopLevelBlock;
+    }
+
+    // Skip only top-level siblings that the original search would skip.
+    // A backwards lookup restarts from the root, including queued requests
+    // to rehighlight earlier setext heading or table header lines.
+    while ((nullptr != current) && current->isBlockType() && (MarkdownNode::TableCell != current->type()) && (current->startLine() <= lineNumber)
+           && (0 != current->endLine()) && (current->endLine() < lineNumber)) {
+        current = current->next();
+    }
+
+    d->lastTopLevelBlock = current;
+    d->lastLookupLine = lineNumber;
 
     while
     (
@@ -184,7 +208,10 @@ QVector<MarkdownNode *> MarkdownAST::headings() const
 void MarkdownAST::clear()
 {
     Q_D(MarkdownAST);
-    
+
+    d->lastTopLevelBlock = nullptr;
+    d->lastLookupLine = -1;
+
     d->arena.freeAll();
     d->root = nullptr;
 }

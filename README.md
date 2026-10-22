@@ -21,6 +21,7 @@ YumiMDWriter 是基于 [KDE ghostwriter](https://github.com/KDE/ghostwriter) 的
 - 图片加载失败时显示非阻塞占位信息。
 - Windows 默认使用系统常规字体与等宽字体。
 - Windows 程序名、窗口、关于页和文件元数据统一为 `YumiMDWriter`。
+- 修复正文紧接表格时后续源码高亮丢失，并保持重新加载、代码围栏与引用链接编辑后的样式同步。
 
 ![编辑器与预览顶部同步](docs/images/sync-preview.png)
 

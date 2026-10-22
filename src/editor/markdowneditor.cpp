@@ -94,15 +94,16 @@ public:
     // or pasted images can be displayed in the live preview.
     static const QStringList webMimeTypes;
 
-    static QStringList imageReadFormats;
-    static QStringList imageWriteFormats;
-    static QString imageOpenFilter;
-    static QString imageSaveFilter;
+    static const QStringList &imageReadFormats();
+    static const QStringList &imageWriteFormats();
+    static const QString &imageOpenFilter();
+    static const QString &imageSaveFilter();
 
     MarkdownEditor *q_ptr;
 
     MarkdownDocument *textDocument;
     MarkdownHighlighter *highlighter;
+    QTimer *rehighlightTimer;
     QGridLayout *preferredLayout;
     bool autoMatchEnabled;
     bool bulletPointCyclingEnabled;
@@ -190,8 +191,7 @@ public:
     bool atCodeBlockEnd(const QTextBlock &block) const;
     bool isBlockquote(const QTextBlock &block) const;
     bool isCodeBlock(const QTextBlock &block) const;
-    
-    static QStringList buildImageReaderFormats();
+
     static QStringList buildImageWriterFormats();
     static QString buildImageFilters(
         const QStringList &mimeTypes,
@@ -202,29 +202,13 @@ public:
     QString uniqueImagePath(const QDir &directory, const QString &fileName) const;
 };
 
-const QStringList MarkdownEditorPrivate::webMimeTypes = QStringList({
-    QStringLiteral("image/png"),
-    QStringLiteral("image/jpeg"),
-    QStringLiteral("image/webp"),
-    QStringLiteral("image/apng"),
-    QStringLiteral("image/avif"),
-    QStringLiteral("image/gif"),
-    QStringLiteral("image/svg")
-});
-
-QStringList MarkdownEditorPrivate::imageReadFormats =
-    MarkdownEditorPrivate::buildImageReaderFormats();
-
-QStringList MarkdownEditorPrivate::imageWriteFormats =
-    MarkdownEditorPrivate::buildImageWriterFormats();
-
-QString MarkdownEditorPrivate::imageOpenFilter =
-    MarkdownEditorPrivate::buildImageFilters(
-        MarkdownEditorPrivate::imageReadFormats, true);
-
-QString MarkdownEditorPrivate::imageSaveFilter =
-    MarkdownEditorPrivate::buildImageFilters(
-        MarkdownEditorPrivate::imageWriteFormats);
+const QStringList MarkdownEditorPrivate::webMimeTypes = QStringList({QStringLiteral("image/png"),
+                                                                     QStringLiteral("image/jpeg"),
+                                                                     QStringLiteral("image/webp"),
+                                                                     QStringLiteral("image/apng"),
+                                                                     QStringLiteral("image/avif"),
+                                                                     QStringLiteral("image/gif"),
+                                                                     QStringLiteral("image/svg+xml")});
 
 MarkdownEditor::MarkdownEditor
 (
@@ -351,6 +335,10 @@ MarkdownEditor::MarkdownEditor
     }
 
     d->highlighter = new MarkdownHighlighter(this, colors);
+    d->rehighlightTimer = new QTimer(this);
+    d->rehighlightTimer->setSingleShot(true);
+    d->rehighlightTimer->setInterval(75);
+    connect(d->rehighlightTimer, &QTimer::timeout, d->highlighter, &QSyntaxHighlighter::rehighlight);
 
     d->typingPausedSignalSent = true;
     d->typingHasPaused = true;
@@ -708,12 +696,19 @@ void MarkdownEditor::setPlainText(const QString &text)
 {
     Q_D(MarkdownEditor);
 
-    d->parseText(text);
+    // Qt treats Unicode separators as visual/block breaks, while cmark only
+    // counts CR/LF. Give both the same logical lines before building the AST.
+    QString normalizedText = text;
+    normalizedText.replace(QChar::LineSeparator, QLatin1Char('\n'));
+    normalizedText.replace(QChar::ParagraphSeparator, QLatin1Char('\n'));
+    d->rehighlightTimer->stop();
+    d->parseText(normalizedText);
     d->loadingDocument = true;
     d->typingHasPaused = true;
     d->scaledTypingHasPaused = true;
-    QPlainTextEdit::setPlainText(text);
+    QPlainTextEdit::setPlainText(normalizedText);
     d->loadingDocument = false;
+    d->highlighter->rehighlight();
 }
 
 QLayout *MarkdownEditor::preferredLayout()
@@ -1127,12 +1122,7 @@ void MarkdownEditor::insertFromMimeData(const QMimeData *source)
                 + QDateTime::currentDateTime().toString("yyyyMMddhhmmsszzz")
                 + ".png";
 
-            imagePath = QFileDialog::getSaveFileName(
-                this,
-                tr("Save Image"),
-                imagePath,
-                d->imageSaveFilter
-            );
+            imagePath = QFileDialog::getSaveFileName(this, tr("Save Image"), imagePath, d->imageSaveFilter());
         }
 
         if (!imagePath.isNull() && !imagePath.isEmpty()) {
@@ -1730,13 +1720,7 @@ void MarkdownEditor::insertImage()
         startingDirectory = QFileInfo(document->filePath()).dir().path();
     }
 
-    QString imagePath =
-        QFileDialog::getOpenFileName(
-            this,
-            tr("Insert Image"),
-            startingDirectory,
-            d->imageOpenFilter
-        );
+    QString imagePath = QFileDialog::getOpenFileName(this, tr("Insert Image"), startingDirectory, d->imageOpenFilter());
 
     if (!imagePath.isNull() && !imagePath.isEmpty()) {
         QTextCursor cursor = this->textCursor();
@@ -1850,14 +1834,15 @@ void MarkdownEditor::onContentsChanged(int position, int charsRemoved, int chars
     Q_D(MarkdownEditor);
     
     Q_UNUSED(position)
-    Q_UNUSED(charsRemoved)
-    Q_UNUSED(charsAdded)
-
-    if (d->loadingDocument) {
+    if (d->loadingDocument || (charsRemoved == 0 && charsAdded == 0)) {
         return;
     }
 
     d->parseDocument();
+    // A new AST can change distant blocks (for example reference links and
+    // code fences). Qt's block-state propagation cannot detect those changes.
+    // Coalesce edits and refresh outside the current highlighting call.
+    d->rehighlightTimer->start();
 
     // Don't use the textChanged() or contentsChanged() (no parameters) signals
     // for checking if the typingResumed() signal needs to be emitted.  These
@@ -2604,7 +2589,7 @@ bool MarkdownEditorPrivate::isWebImage(const QString &path) const
     QMimeDatabase database;
     const QString mimeType =
         database.mimeTypeForFile(path, QMimeDatabase::MatchExtension).name();
-    return imageReadFormats.contains(mimeType);
+    return imageReadFormats().contains(mimeType);
 }
 
 QString MarkdownEditorPrivate::uniqueImagePath(
@@ -2696,24 +2681,31 @@ QString MarkdownEditorPrivate::markdownImageDestination(
     return QUrl::fromLocalFile(absolutePath).toString(QUrl::FullyEncoded);
 }
 
-QStringList MarkdownEditorPrivate::buildImageReaderFormats()
+const QStringList &MarkdownEditorPrivate::imageReadFormats()
 {
-    QStringList result;
+    // Inserting a file only creates a Markdown URL; decoding is performed by
+    // the web preview. Do not restrict this list to QImageReader plugins.
+    return webMimeTypes;
+}
 
-    QList<QByteArray> supportedFormats = QImageReader::supportedMimeTypes();
+const QStringList &MarkdownEditorPrivate::imageWriteFormats()
+{
+    // Delay plugin discovery until QApplication has initialized Qt's library
+    // paths. Static initialization happens too early on portable Windows.
+    static const QStringList formats = buildImageWriterFormats();
+    return formats;
+}
 
-    for (auto mimeType : webMimeTypes) {
-        if (supportedFormats.contains(mimeType.toLatin1())) {
-            result.append(mimeType);
-        }
-    }
+const QString &MarkdownEditorPrivate::imageOpenFilter()
+{
+    static const QString filter = buildImageFilters(imageReadFormats(), true);
+    return filter;
+}
 
-    // Since QImageReader::supportedMimeTypes does not return the SVG mime
-    // type even though Qt supports reading it and we have included that
-    // module to build, add it manually.
-    result.append(QStringLiteral("image/svg+xml"));
-
-    return result;
+const QString &MarkdownEditorPrivate::imageSaveFilter()
+{
+    static const QString filter = buildImageFilters(imageWriteFormats());
+    return filter;
 }
 
 QStringList MarkdownEditorPrivate::buildImageWriterFormats()
