@@ -880,7 +880,12 @@ int MarkdownEditor::lineNumberAreaWidth() const
         ++digits;
     }
 
-    return (2 * lineNumberHorizontalPadding) + (fontMetrics().horizontalAdvance(QLatin1Char('9')) * digits);
+    int digitWidth = 0;
+    for (char digit = '0'; digit <= '9'; ++digit) {
+        digitWidth = qMax(digitWidth, fontMetrics().horizontalAdvance(QLatin1Char(digit)));
+    }
+
+    return (2 * lineNumberHorizontalPadding) + digitWidth * digits;
 }
 
 void MarkdownEditor::paintLineNumberArea(QPaintEvent *event)
@@ -888,14 +893,16 @@ void MarkdownEditor::paintLineNumberArea(QPaintEvent *event)
     Q_D(MarkdownEditor);
 
     QPainter painter(d->lineNumberArea);
+    painter.setFont(font());
     painter.fillRect(event->rect(), d->lineNumberBackgroundColor);
     painter.setPen(d->lineNumberSeparatorColor);
     painter.drawLine(d->lineNumberArea->width() - 1, event->rect().top(), d->lineNumberArea->width() - 1, event->rect().bottom());
 
     QTextBlock block = firstVisibleBlock();
     const int viewportTop = viewport()->geometry().top() - d->lineNumberArea->geometry().top();
-    int top = viewportTop + qRound(blockBoundingGeometry(block).translated(contentOffset()).top());
-    int bottom = top + qRound(blockBoundingRect(block).height());
+    painter.setClipRect(QRect(0, viewportTop, d->lineNumberArea->width(), viewport()->height()));
+    qreal top = viewportTop + blockBoundingGeometry(block).translated(contentOffset()).top();
+    qreal bottom = top + blockBoundingRect(block).height();
     const int currentBlockNumber = textCursor().blockNumber();
     const QFontMetricsF numberMetrics(painter.font());
 
@@ -916,10 +923,10 @@ void MarkdownEditor::paintLineNumberArea(QPaintEvent *event)
         }
 
         block = block.next();
-        top = bottom;
 
         if (block.isValid()) {
-            bottom = top + qRound(blockBoundingRect(block).height());
+            top = viewportTop + blockBoundingGeometry(block).translated(contentOffset()).top();
+            bottom = top + blockBoundingRect(block).height();
         }
     }
 }

@@ -4,12 +4,15 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QMimeData>
 #include <QScrollBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextLayout>
+#include <QtMath>
 
 #include "../../src/editor/markdowneditor.h"
 #include "../../src/editor/markdownstates.h"
@@ -23,7 +26,8 @@ class MarkdownEditorTest : public QObject
 private slots:
     void inputMethodRectUsesEditorCoordinates();
     void inputMethodAnchorRectUsesEditorCoordinates();
-    void displaysAndReservesLineNumberArea();
+    void lineNumberAreaTracksEditingAndFontSize();
+    void lineNumbersFollowSourceLinesWhileWrappingAndScrolling();
     void highlightsInlineCodeWithBackground();
     void dropsJpegAsMarkdownImage();
     void highlightsMarkdownAfterTable_data();
@@ -117,34 +121,145 @@ void MarkdownEditorTest::inputMethodAnchorRectUsesEditorCoordinates()
         editorCoordinates(editor, anchorCursor));
 }
 
-void MarkdownEditorTest::displaysAndReservesLineNumberArea()
+void MarkdownEditorTest::lineNumberAreaTracksEditingAndFontSize()
 {
     MarkdownDocument document;
     MarkdownEditor editor(&document, testColors());
+    editor.resize(480, 220);
     editor.setEditorWidth(EditorWidthFull);
-    editor.setupPaperMargins();
-    editor.resize(480, 180);
-    editor.setPlainText(QString("line\n").repeated(8) + "line");
+    editor.setFont(QStringLiteral("Arial"), 12);
+    editor.setPlainText(QStringLiteral("line\n").repeated(8) + QStringLiteral("line"));
     editor.show();
     QVERIFY(QTest::qWaitForWindowExposed(&editor));
 
-    QWidget *lineNumberArea = editor.findChild<QWidget *>(QStringLiteral("lineNumberArea"));
-    QVERIFY(lineNumberArea != nullptr);
-    QVERIFY(lineNumberArea->isVisible());
-
-    const int oneDigitWidth = lineNumberArea->width();
+    QWidget *area = editor.findChild<QWidget *>(QStringLiteral("lineNumberArea"));
+    QVERIFY(area != nullptr);
+    QVERIFY(area->isVisible());
+    const int oneDigitWidth = area->width();
     QVERIFY(oneDigitWidth > 0);
-    QVERIFY(editor.viewport()->geometry().left() > lineNumberArea->geometry().right());
+    QVERIFY(editor.viewport()->geometry().left() > area->geometry().right());
 
-    editor.setPlainText(QString("line\n").repeated(99) + "line");
+    // Exercise the contents-change path, including undo/redo, rather than
+    // calling setupPaperMargins() after the document's line count changes.
+    QTextCursor cursor(&document);
+    cursor.movePosition(QTextCursor::End);
+    cursor.insertText(QStringLiteral("\nline"));
+    QCOMPARE(document.blockCount(), 10);
+    QTRY_VERIFY(area->width() > oneDigitWidth);
+    const int twoDigitWidth = area->width();
+    document.undo();
+    QTRY_COMPARE(area->width(), oneDigitWidth);
+    document.redo();
+    QTRY_COMPARE(area->width(), twoDigitWidth);
+
+    editor.setPlainText(QStringLiteral("line\n").repeated(98) + QStringLiteral("line"));
+    QTRY_COMPARE(area->width(), twoDigitWidth);
+    cursor = QTextCursor(&document);
+    cursor.movePosition(QTextCursor::End);
+    cursor.insertText(QStringLiteral("\nline"));
+    QCOMPARE(document.blockCount(), 100);
+    QTRY_VERIFY(area->width() > twoDigitWidth);
+    const int threeDigitWidth = area->width();
+
+    editor.setFont(QStringLiteral("Arial"), 24);
+    QTRY_VERIFY(area->width() > threeDigitWidth);
+    QVERIFY(editor.viewport()->geometry().left() > area->geometry().right());
+    editor.setFont(QStringLiteral("Arial"), 12);
+    QTRY_COMPARE(area->width(), threeDigitWidth);
+
+    editor.setPlainText(QString());
+    QCOMPARE(document.blockCount(), 1);
+    QTRY_COMPARE(area->width(), oneDigitWidth);
+    QVERIFY(editor.viewport()->geometry().left() > area->geometry().right());
+}
+
+// Inspect rendered ink rather than comparing whole screenshots, so these
+// checks tolerate platform-specific font rasterization and high DPI displays.
+static bool hasLineNumberInk(const QImage &image, const QRect &logicalRect)
+{
+    const qreal scale = image.devicePixelRatio();
+    const QRect pixelRect(qFloor(logicalRect.left() * scale),
+                          qFloor(logicalRect.top() * scale),
+                          qCeil(logicalRect.width() * scale),
+                          qCeil(logicalRect.height() * scale));
+    const QRect clipped = pixelRect.intersected(image.rect());
+
+    for (int y = clipped.top(); y <= clipped.bottom(); ++y) {
+        for (int x = clipped.left(); x <= clipped.right(); ++x) {
+            if (qGray(image.pixel(x, y)) < 200) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+void MarkdownEditorTest::lineNumbersFollowSourceLinesWhileWrappingAndScrolling()
+{
+    MarkdownDocument document;
+    MarkdownEditor editor(&document, testColors());
+    editor.resize(560, 400);
+    editor.setEditorWidth(EditorWidthFull);
+    editor.setFont(QStringLiteral("Arial"), 12);
+    editor.setEnableLargeHeadingSizes(true);
+    const QString wrappedParagraph = QStringLiteral("中文长段落和 English words 会自动换行，但仍然只占一个源码行。 ").repeated(10);
+    editor.setPlainText(QStringLiteral("# Large heading\n\n") + wrappedParagraph + QStringLiteral("\n\n## Smaller heading\n\n")
+                        + QStringLiteral("body line\n\n").repeated(16));
+    editor.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&editor));
+    editor.highlighter()->rehighlight();
+    QCoreApplication::processEvents();
+    editor.verticalScrollBar()->setValue(0);
     QCoreApplication::processEvents();
 
-    QVERIFY(lineNumberArea->width() > oneDigitWidth);
-    QVERIFY(editor.viewport()->geometry().left() > lineNumberArea->geometry().right());
+    QWidget *area = editor.findChild<QWidget *>(QStringLiteral("lineNumberArea"));
+    QVERIFY(area != nullptr);
+    const int viewportTop = editor.viewport()->geometry().top() - area->geometry().top();
+    const int inkWidth = area->width() - 2; // Exclude the faint separator.
+    const QImage initial = area->grab().toImage();
+    const QString snapshotDirectory = qEnvironmentVariable("YUMIMDWRITER_GUTTER_SNAPSHOT_DIR");
+    if (!snapshotDirectory.isEmpty()) {
+        QVERIFY(QDir().mkpath(snapshotDirectory));
+        QVERIFY(editor.grab().save(QDir(snapshotDirectory).filePath(QStringLiteral("gutter-mixed-headings-wrap.png"))));
+        QVERIFY(initial.save(QDir(snapshotDirectory).filePath(QStringLiteral("gutter-initial-detail.png"))));
+    }
 
-    editor.verticalScrollBar()->setValue(editor.verticalScrollBar()->maximum());
+    const QTextBlock heading = document.firstBlock();
+    const QRect headingCursor = editor.cursorRect(QTextCursor(heading));
+    const qreal headingBaseline = viewportTop + headingCursor.top() + heading.layout()->lineAt(0).ascent();
+    QVERIFY(heading.layout()->lineAt(0).height() > editor.fontMetrics().height());
+    QVERIFY(hasLineNumberInk(initial, QRect(0, qFloor(headingBaseline) - 4, inkWidth, 5)));
+
+    // Blank source lines have numbers, while visual continuation rows do not.
+    const QTextBlock blankLine = document.findBlockByNumber(1);
+    const QRect blankCursor = editor.cursorRect(QTextCursor(blankLine));
+    QVERIFY(hasLineNumberInk(initial, QRect(0, viewportTop + blankCursor.top(), inkWidth, blankCursor.height())));
+    const QTextBlock paragraph = document.findBlockByNumber(2);
+    QVERIFY(paragraph.layout()->lineCount() > 2);
+    QTextCursor firstVisualLine(paragraph);
+    const QRect firstCursor = editor.cursorRect(firstVisualLine);
+    QVERIFY(hasLineNumberInk(initial, QRect(0, viewportTop + firstCursor.top(), inkWidth, firstCursor.height())));
+    QTextCursor continuation(paragraph);
+    continuation.setPosition(paragraph.position() + paragraph.layout()->lineAt(1).textStart());
+    const QRect continuationCursor = editor.cursorRect(continuation);
+    QVERIFY(!hasLineNumberInk(initial, QRect(0, viewportTop + continuationCursor.top(), inkWidth, continuationCursor.height())));
+
+    // After scrolling, source numbering must still align with visible blocks,
+    // and numbers from the previous view must not enter the upper paper margin.
+    QTextCursor lowerCursor(document.findBlockByNumber(12));
+    editor.setTextCursor(lowerCursor);
+    editor.centerCursor();
     QCoreApplication::processEvents();
+    const QImage scrolled = area->grab().toImage();
+    if (!snapshotDirectory.isEmpty()) {
+        QVERIFY(editor.grab().save(QDir(snapshotDirectory).filePath(QStringLiteral("gutter-scrolled.png"))));
+        QVERIFY(scrolled.save(QDir(snapshotDirectory).filePath(QStringLiteral("gutter-scrolled-detail.png"))));
+    }
     QVERIFY(editor.topVisibleSourceLine() > 1);
+    QVERIFY(!hasLineNumberInk(scrolled, QRect(0, 0, inkWidth, viewportTop)));
+    const QRect lowerRect = editor.cursorRect(lowerCursor);
+    QVERIFY(hasLineNumberInk(scrolled, QRect(0, viewportTop + lowerRect.top(), inkWidth, lowerRect.height())));
 }
 
 void MarkdownEditorTest::highlightsInlineCodeWithBackground()
